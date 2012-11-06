@@ -1,7 +1,18 @@
 require 'open3'
+require 'shellwords'
 
 module FFMPEG
   class Transcoder
+    @@timeout = 200
+
+    def self.timeout=(time)
+      @@timeout = time
+    end
+
+    def self.timeout
+      @@timeout
+    end
+
     def initialize(movie, output_file, options = EncodingOptions.new, transcoder_options = {})
       @movie = movie
       @output_file = output_file
@@ -20,24 +31,45 @@ module FFMPEG
       apply_transcoder_options
     end
     
+    # ffmpeg <  0.8: frame=  413 fps= 48 q=31.0 size=    2139kB time=16.52 bitrate=1060.6kbits/s
+    # ffmpeg >= 0.8: frame= 4855 fps= 46 q=31.0 size=   45306kB time=00:02:42.28 bitrate=2287.0kbits/
     def run
-      command = "ffmpeg -y -i '#{@movie.path}' #{@raw_options} '#{@output_file}'"
+      command = "#{FFMPEG.ffmpeg_binary} -y -i #{Shellwords.escape(@movie.path)} #{@raw_options} #{Shellwords.escape(@output_file)}"
       FFMPEG.logger.info("Running transcoding...\n#{command}\n")
       output = ""
       last_output = nil
-      Open3.popen3(command) do |stdin, stdout, stderr|
-        stderr.each("r") do |line|
-          fix_encoding(line)
-          output << line
-          if line =~ /time=(\d+.\d+)/
-            time = $1.to_f
-            progress = time / @movie.duration
-            yield(progress) if block_given?
+      Open3.popen3(command) do |stdin, stdout, stderr, wait_thr|
+        begin
+          yield(0.0) if block_given?
+          next_line = Proc.new do |line|
+            fix_encoding(line)
+            output << line
+            if line.include?("time=")
+              if line =~ /time=(\d+):(\d+):(\d+.\d+)/ # ffmpeg 0.8 and above style
+                time = ($1.to_i * 3600) + ($2.to_i * 60) + $3.to_f
+              elsif line =~ /time=(\d+.\d+)/ # ffmpeg 0.7 and below style
+                time = $1.to_f
+              else # better make sure it wont blow up in case of unexpected output
+                time = 0.0
+              end
+              progress = time / @movie.duration
+              yield(progress) if block_given?
+            end
+            if line =~ /Unsupported codec/
+              FFMPEG.logger.error "Failed encoding...\nCommand\n#{command}\nOutput\n#{output}\n"
+              raise "Failed encoding: #{line}"
+            end
           end
-          if line =~ /Unsupported codec/
-            FFMPEG.logger.error "Failed encoding...\nCommand\n#{command}\nOutput\n#{output}\n"
-            raise "Failed encoding: #{line}"
+          
+          if @@timeout
+            stderr.each_with_timeout(wait_thr.pid, @@timeout, "r", &next_line)
+          else
+            stderr.each("r", &next_line)
           end
+            
+        rescue Timeout::Error => e
+          FFMPEG.logger.error "Process hung...\nCommand\n#{command}\nOutput\n#{output}\n"
+          raise FFMPEG::Error, "Process hung. Full output: #{output}"
         end
       end
 
@@ -45,34 +77,17 @@ module FFMPEG
         yield(1.0) if block_given?
         FFMPEG.logger.info "Transcoding of #{@movie.path} to #{@output_file} succeeded\n"
       else
-        errors = @errors.empty? ? "" : " Errors: #{@errors.join(", ")}. "
+        errors = "Errors: #{@errors.join(", ")}. "
         FFMPEG.logger.error "Failed encoding...\n#{command}\n\n#{output}\n#{errors}\n"
-        raise "Failed encoding.#{errors}Full output: #{output}"
+        raise FFMPEG::Error, "Failed encoding.#{errors}Full output: #{output}"
       end
       
       encoded
     end
     
     def encoding_succeeded?
-      unless File.exists?(@output_file)
-        @errors << "no output file created"
-        return false
-      end
-      
-      unless encoded.valid?
-        @errors << "encoded file is invalid"
-        return false
-      end
-      
-      if validate_duration?
-        precision = @raw_options[:duration] ? 1.5 : 1.1
-        desired_duration = @raw_options[:duration] && @raw_options[:duration] < @movie.duration ? @raw_options[:duration] : @movie.duration
-        if (encoded.duration >= (desired_duration * precision) or encoded.duration <= (desired_duration / precision))
-          @errors << "encoded file duration differed from original/specified duration (wanted: #{desired_duration}sec, got: #{encoded.duration}sec)"
-          return false
-        end
-      end
-      
+      @errors << "no output file created" and return false unless File.exists?(@output_file)
+      @errors << "encoded file is invalid" and return false unless encoded.valid?
       true
     end
     
@@ -95,13 +110,6 @@ module FFMPEG
         new_width += 1 if new_width.odd?
         @raw_options[:resolution] = "#{new_width}x#{@raw_options.height}"
       end
-    end
-    
-    def validate_duration?
-      return false if @movie.uncertain_duration?
-      return false if %w(.jpg .png).include?(File.extname(@output_file))
-      return false if @raw_options.is_a?(String)
-      true
     end
     
     def fix_encoding(output)

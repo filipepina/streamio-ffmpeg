@@ -9,8 +9,12 @@ module FFMPEG
         send("convert_#{key}", value) if value && supports_option?(key)
       end
       
-      # put the preset parameters last
-      params = params.reject { |p| p =~ /\-.pre/ } + params.select { |p| p =~ /\-.pre/ }
+      # codecs should go before the presets so that the files will be matched successfully
+      # all other parameters go after so that we can override whatever is in the preset
+      codecs = params.select { |p| p =~ /codec/ }
+      presets = params.select { |p| p =~ /\-.pre/ }
+      other = params - codecs - presets
+      params = codecs + presets + other
       
       params_string = params.join(" ")
       params_string << " #{convert_aspect(calculate_aspect)}" if calculate_aspect?
@@ -44,22 +48,6 @@ module FFMPEG
       self[:aspect].nil? && self[:resolution]
     end
     
-    def convert_croptop(value)
-      "-croptop #{value}"
-    end
-    
-    def convert_cropbottom(value)
-      "-cropbottom #{value}"
-    end
-    
-    def convert_cropleft(value)
-      "-cropleft #{value}"
-    end
-    
-    def convert_cropright(value)
-      "-cropright #{value}"
-    end
-    
     def convert_video_codec(value)
       "-vcodec #{value}"
     end
@@ -73,7 +61,7 @@ module FFMPEG
     end
     
     def convert_video_bitrate(value)
-      "-b #{k_format(value)}"
+      "-b:v #{k_format(value)}"
     end
     
     def convert_audio_codec(value)
@@ -81,7 +69,7 @@ module FFMPEG
     end
     
     def convert_audio_bitrate(value)
-      "-ab #{k_format(value)}"
+      "-b:a #{k_format(value)}"
     end
     
     def convert_audio_sample_rate(value)
@@ -126,6 +114,18 @@ module FFMPEG
     
     def convert_file_preset(value)
       "-fpre #{value}"
+    end
+    
+    def convert_keyframe_interval(value)
+      "-g #{value}"
+    end
+
+    def convert_seek_time(value)
+      "-ss #{value}"
+    end
+    
+    def convert_screenshot(value)
+      value ? "-vframes 1 -f image2" : ""
     end
     
     def convert_custom(value)

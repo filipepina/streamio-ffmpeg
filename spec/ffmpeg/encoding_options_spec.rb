@@ -7,13 +7,6 @@ module FFMPEG
         EncodingOptions.new(:video_codec => "libx264").to_s.should == "-vcodec libx264"
       end
       
-      it "should convert cropping options" do
-        EncodingOptions.new(:croptop => 20).to_s.should == "-croptop 20"
-        EncodingOptions.new(:cropbottom => 20).to_s.should == "-cropbottom 20"
-        EncodingOptions.new(:cropleft => 20).to_s.should == "-cropleft 20"
-        EncodingOptions.new(:cropright => 20).to_s.should == "-cropright 20"
-      end
-      
       it "should know the width from the resolution or be nil" do
         EncodingOptions.new(:resolution => "320x240").width.should == 320
         EncodingOptions.new.width.should be_nil
@@ -44,11 +37,11 @@ module FFMPEG
       end
       
       it "should convert video bitrate" do
-        EncodingOptions.new(:video_bitrate => "600k").to_s.should == "-b 600k"
+        EncodingOptions.new(:video_bitrate => "600k").to_s.should == "-b:v 600k"
       end
       
       it "should use k unit for video bitrate" do
-        EncodingOptions.new(:video_bitrate => 600).to_s.should == "-b 600k"
+        EncodingOptions.new(:video_bitrate => 600).to_s.should == "-b:v 600k"
       end
       
       it "should convert audio codec" do
@@ -56,11 +49,11 @@ module FFMPEG
       end
       
       it "should convert audio bitrate" do
-        EncodingOptions.new(:audio_bitrate => "128k").to_s.should == "-ab 128k"
+        EncodingOptions.new(:audio_bitrate => "128k").to_s.should == "-b:a 128k"
       end
       
       it "should use k unit for audio bitrate" do
-        EncodingOptions.new(:audio_bitrate => 128).to_s.should == "-ab 128k"
+        EncodingOptions.new(:audio_bitrate => 128).to_s.should == "-b:a 128k"
       end
       
       it "should convert audio sample rate" do
@@ -95,6 +88,10 @@ module FFMPEG
         EncodingOptions.new(:duration => 30).to_s.should == "-t 30"
       end
       
+      it "should convert keyframe interval" do
+        EncodingOptions.new(:keyframe_interval => 60).to_s.should == "-g 60"
+      end
+      
       it "should convert video preset" do
         EncodingOptions.new(:video_preset => "max").to_s.should == "-vpre max"
       end
@@ -106,14 +103,23 @@ module FFMPEG
       it "should convert file preset" do
         EncodingOptions.new(:file_preset => "max.ffpreset").to_s.should == "-fpre max.ffpreset"
       end
+
+      it "should specify seek time" do
+        EncodingOptions.new(:seek_time => 1).to_s.should == "-ss 1"
+      end
       
-      it "should put the preset parameters last" do
+      it "should specify screenshot parameters" do
+        EncodingOptions.new(:screenshot => true).to_s.should == "-vframes 1 -f image2"
+      end
+      
+      it "should put the parameters in order of codecs, presets, others" do
         opts = Hash.new
+        opts[:frame_rate] = 25
         opts[:video_codec] = "libx264"
         opts[:video_preset] = "normal"
         
         converted = EncodingOptions.new(opts).to_s
-        converted.should == "-vcodec libx264 -vpre normal"
+        converted.should == "-vcodec libx264 -vpre normal -r 25"
       end
       
       it "should convert a lot of them simultaneously" do
